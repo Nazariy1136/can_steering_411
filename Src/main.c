@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "dma.h"
 #include "spi.h"
 #include "usart.h"
 #include "gpio.h"
@@ -36,6 +37,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define SYNC 0xC8;
+#define RC 0x16;
 #define UART_RX_BUF_SIZE 64
 #define PACKET_START_1 0x57
 #define PACKET_START_2 0xAB
@@ -55,6 +58,8 @@
 /* USER CODE BEGIN PV */
 uint16_t counter = 0;
 uint16_t counter1 = 0;
+uint16_t counterrx = 0;
+uint16_t counter1rx = 0;
 uint16_t frame_type;
 
 uint8_t uart_rx_byte;
@@ -67,6 +72,19 @@ int16_t angle;
 uint8_t angle_low;
 uint8_t angle_high;
 
+const uint8_t numOfChannels = 16;
+const uint8_t srcBits = 11;
+const uint16_t inputChannelMask = (1 << srcBits) - 1;
+
+uint8_t bitsMerged = 0;
+uint32_t readValue = 0;
+uint8_t readByteIndex = 0;
+
+uint8_t data_type;
+uint8_t DMA_buffer[64];
+uint8_t RxData_rc[26];
+uint16_t rcData[16];
+
 struct CAN_Rx_Message Rx_Msg;
 struct Channels ch;
 
@@ -76,6 +94,7 @@ struct Channels ch;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
+void unpackChannelData(uint8_t *RxDataRC, uint16_t *RCData);
 void ProcessUARTByte(uint8_t byte);
 void SetAngle(uint16_t angle);
 /* USER CODE END PFP */
@@ -114,6 +133,18 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
         ProcessUARTByte(uart_rx_byte);
         HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
     }
+		if (huart->Instance == USART2) {counter1rx++;}
+		if(huart == &huart2){
+		counterrx++;
+		for(int i = 0; i<26; i++){
+			if(DMA_buffer[i] == 0xC8){
+				data_type = DMA_buffer[i+2];
+				if(data_type == 0x16){
+				memcpy(RxData_rc, &DMA_buffer[i], 26 * sizeof(RxData_rc[0]));
+					}}}
+		unpackChannelData(RxData_rc, rcData);
+		HAL_UART_Receive_DMA(&huart2, DMA_buffer, sizeof(DMA_buffer));	
+	}
 }
 
 void ProcessUARTByte(uint8_t byte) {
@@ -139,6 +170,23 @@ void ProcessUARTByte(uint8_t byte) {
 				in_packet = 0;
 	}}}}
 
+void unpackChannelData(uint8_t *RxDataRC, uint16_t *RCData)
+{
+	bitsMerged = 0;
+	readValue = 0;
+	readByteIndex = 3;
+
+	for (uint8_t n = 0; n < numOfChannels; n++) {
+		while (bitsMerged < srcBits) {
+			uint8_t readByte = RxDataRC[readByteIndex++];
+      readValue |= ((uint32_t) readByte) << bitsMerged;
+      bitsMerged += 8;
+			}
+			RCData[n] = (readValue & inputChannelMask);
+			readValue >>= srcBits;
+			bitsMerged -= srcBits;
+	}
+}
 void SetAngle(uint16_t angle){
 	uCAN_MSG txMessage;
 	angle_low = (angle + 1024) & 0xFF;
@@ -189,11 +237,14 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
 	
+  HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
+	HAL_UART_Receive_DMA(&huart2, DMA_buffer, sizeof(DMA_buffer));
   //uCAN_MSG txMessage;
 	uCAN_MSG rxMessage;
   CANSPI_Initialize();
@@ -208,7 +259,10 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	angle = 0.3515 * ch.channel2 - 360;
+	if (ch.channel8>2000)
+	{angle = ((0.3515 * ch.channel2) - 360);}
+	if (rcData[7]>1800)
+	{angle = (((rcData[1]-172)*0.4395)-360);}
 	SetAngle(angle);
 	
 	if(CANSPI_Receive(&rxMessage)){
@@ -221,9 +275,11 @@ int main(void)
 		Rx_Msg.data6 = rxMessage.frame.data6;
 		Rx_Msg.data7 = rxMessage.frame.data7;
 		Rx_Msg.angle = ((Rx_Msg.data3 << 8) + Rx_Msg.data4) - 1024;
-  }}
+  }
+	HAL_UART_Receive_DMA(&huart2, DMA_buffer, sizeof(DMA_buffer));
+	}
     /* USER CODE END WHILE */
-	
+
     /* USER CODE BEGIN 3 */
 	
   /* USER CODE END 3 */
