@@ -81,13 +81,20 @@ uint32_t readValue = 0;
 uint8_t readByteIndex = 0;
 
 uint8_t data_type;
+uint8_t command_type;
 uint8_t DMA_buffer[64];
+uint8_t SPI_buffer[64];
 uint8_t RxData_rc[26];
+uint8_t SPIData_rc[26];
 uint16_t rcData[16];
+uint16_t SPIrcData[16];
 
 struct CAN_Rx_Message Rx_Msg;
 struct Channels ch;
 
+char m = 'M';
+uint8_t txData[] = {'M', 0xBB, 0xCC};
+uint8_t rxData[3];
 
 /* USER CODE END PV */
 
@@ -97,6 +104,10 @@ void SystemClock_Config(void);
 void unpackChannelData(uint8_t *RxDataRC, uint16_t *RCData);
 void ProcessUARTByte(uint8_t byte);
 void SetAngle(uint16_t angle);
+
+
+void reset_near_control(void);
+void reset_far_control(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -132,9 +143,9 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
     if (huart->Instance == USART1) {
         ProcessUARTByte(uart_rx_byte);
         HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
+				reset_far_control();
     }
-		if (huart->Instance == USART2) {counter1rx++;}
-		if(huart == &huart2){
+		if(huart->Instance == USART2){
 		counterrx++;
 		for(int i = 0; i<26; i++){
 			if(DMA_buffer[i] == 0xC8){
@@ -143,9 +154,64 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 				memcpy(RxData_rc, &DMA_buffer[i], 26 * sizeof(RxData_rc[0]));
 					}}}
 		unpackChannelData(RxData_rc, rcData);
-		HAL_UART_Receive_DMA(&huart2, DMA_buffer, sizeof(DMA_buffer));	
+		HAL_UART_Receive_DMA(&huart2, DMA_buffer, sizeof(DMA_buffer));
+		reset_near_control();					
 	}
 }
+
+void HAL_SPI_RxCpltCallback(SPI_HandleTypeDef *hspi) {
+    if (hspi == &hspi2) {
+			for(int i = 0; i<26; i++){
+			if(SPI_buffer[i] == '$' && SPI_buffer[i+1] == 'M' && SPI_buffer[i+2] == '>'){}
+				command_type = DMA_buffer[i+3];
+				if(command_type == command_type){
+					memcpy(SPIData_rc, &SPI_buffer[i], 26 * sizeof(SPIData_rc[0]));
+					SPIrcData[0] = ((SPIData_rc[1] << 8) | SPIData_rc[0]);
+					SPIrcData[1] = ((SPIData_rc[3] << 8) | SPIData_rc[2]);
+					SPIrcData[2] = ((SPIData_rc[5] << 8) | SPIData_rc[4]);
+					SPIrcData[3] = ((SPIData_rc[7] << 8) | SPIData_rc[6]);
+					SPIrcData[4] = ((SPIData_rc[9] << 8) | SPIData_rc[8]);
+					SPIrcData[5] = ((SPIData_rc[11] << 8) | SPIData_rc[10]);
+					SPIrcData[6] = ((SPIData_rc[13] << 8) | SPIData_rc[12]);
+					SPIrcData[7] = ((SPIData_rc[15] << 8) | SPIData_rc[14]);
+				}
+					
+			}
+
+    }
+		HAL_SPI_Receive_IT(&hspi2, SPI_buffer, sizeof(SPI_buffer));
+}
+void HAL_SPI_TxCpltCallback(SPI_HandleTypeDef *hspi) {
+    if (hspi == &hspi2) {
+        // Действия после отправки (например, включить прием)
+        
+    }
+}
+
+
+
+void ProcessSPIByte(uint8_t byte) {
+	if (!in_packet) {
+		if (byte == PACKET_START_1) {
+			packet_pos = 0;
+			buffer[packet_pos++] = byte;
+		}
+		else{
+		buffer[packet_pos++] = byte;
+		frame_type = buffer[2];
+		if (packet_pos >= PACKET_SIZE && buffer[2] == 0x88 && buffer[0] == PACKET_START_1) {
+				counter1++;
+				memcpy(packet, buffer, PACKET_SIZE);
+				ch.channel1 = (((packet[9] << 8) | packet[8]));
+				ch.channel2 = (((packet[11] << 8) | packet[10]));
+				ch.channel3 = (((packet[13] << 8) | packet[12]));
+				ch.channel4 = (((packet[15] << 8) | packet[14]));
+			  ch.channel5 = (((packet[17] << 8) | packet[16]));
+				ch.channel6 = (((packet[19] << 8) | packet[18]));
+				ch.channel7 = (((packet[21] << 8) | packet[20]));
+				ch.channel8 = (((packet[23] << 8) | packet[22]));
+				in_packet = 0;
+	}}}}
 
 void ProcessUARTByte(uint8_t byte) {
 	if (!in_packet) {
@@ -206,6 +272,9 @@ void SetAngle(uint16_t angle){
   CANSPI_Transmit(&txMessage);
 }
 
+void reset_near_control(void){ch.channel8 = 0;}
+void reset_far_control(void){rcData[7] = 0;}
+
 /* USER CODE END 0 */
 
 /**
@@ -241,10 +310,18 @@ int main(void)
   MX_SPI1_Init();
   MX_USART1_UART_Init();
   MX_USART2_UART_Init();
+  MX_SPI2_Init();
   /* USER CODE BEGIN 2 */
-	
+	//HAL_GPIO_WritePin(SPI2_CS_GPIO_Port, SPI2_CS_Pin, GPIO_PIN_SET);
   HAL_UART_Receive_IT(&huart1, &uart_rx_byte, 1);
 	HAL_UART_Receive_DMA(&huart2, DMA_buffer, sizeof(DMA_buffer));
+	HAL_SPI_Receive_IT(&hspi2, SPI_buffer, sizeof(SPI_buffer));
+	
+	
+	
+	HAL_SPI_Transmit_IT(&hspi2, txData, 3);
+	HAL_SPI_Receive_IT(&hspi2, rxData, 3);
+	
   //uCAN_MSG txMessage;
 	uCAN_MSG rxMessage;
   CANSPI_Initialize();
@@ -258,7 +335,8 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  {
+  { 
+		
 	if (ch.channel8>2000)
 	{angle = ((0.3515 * ch.channel2) - 360);}
 	if (rcData[7]>1800)
@@ -277,6 +355,9 @@ int main(void)
 		Rx_Msg.angle = ((Rx_Msg.data3 << 8) + Rx_Msg.data4) - 1024;
   }
 	HAL_UART_Receive_DMA(&huart2, DMA_buffer, sizeof(DMA_buffer));
+	
+	HAL_Delay(50);
+	//HAL_SPI_Transmit_IT(&hspi2, txData, 3);
 	}
     /* USER CODE END WHILE */
 
