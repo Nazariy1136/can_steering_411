@@ -40,9 +40,9 @@
 /* USER CODE BEGIN PD */
 #define WHEEL_CHANNEL 1
 
-#define CONTROL_MODE 0x20
+#define CONTROL_MODE 0x10
 #define CENETER_ANGLE 0x00
-#define ANGULAR_VELOCITY 250
+#define ANGULAR_VELOCITY 20
 #define MSP_SET_RAW_RC 200
 /* USER CODE END PD */
 
@@ -251,7 +251,7 @@ int main(void)
 	if (RC_SPI[WHEEL_CHANNEL]>0){angle = (((RC_SPI[WHEEL_CHANNEL]-172)*0.4395)-360);}
 	else if (RC_HID[WHEEL_CHANNEL]>0){angle = ((0.3515 * RC_HID[WHEEL_CHANNEL]) - 360);}
 	else if (RC_TBS[WHEEL_CHANNEL]>0){angle = (((RC_TBS[WHEEL_CHANNEL]-172)*0.4395)-360);}
-	SetAngle(angle);
+	SetAngle(0);
 	
 	if(CANSPI_Receive(&rxMessage)){
 		Rx_Msg.data0 = rxMessage.frame.data0;
